@@ -1,48 +1,263 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Simple WebSocket Chat</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stage Monitor Communication</title>
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+    <style>
+        body {
+          font-family: 'Segoe UI', sans-serif;
+          background: #f0f0f5;
+          margin: 0;
+          padding: 20px;
+        }
+
+        .container {
+          max-width: 1000px;
+          margin: auto;
+          background: #fff;
+          padding: 20px;
+          border-radius: 10px;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+
+        h2 {
+          text-align: center;
+          margin-bottom: 10px;
+        }
+
+        .toggle-container {
+          text-align: center;
+          margin-bottom: 20px;
+        }
+
+        .toggle-container label {
+          font-size: 1.1rem;
+          margin: 0 10px;
+        }
+
+        .chat-area {
+          max-height: 300px;
+          overflow-y: auto;
+          border: 1px solid #ccc;
+          padding: 10px;
+          border-radius: 8px;
+          margin-bottom: 20px;
+          background-color: #fafafa;
+        }
+
+        #chat {
+          list-style: none;
+          padding: 0;
+          margin: 0;
+        }
+
+        .chat-item {
+          padding: 10px;
+          background: #e6f7ff;
+          border-radius: 8px;
+          margin-bottom: 10px;
+          position: relative;
+        }
+
+        .chat-item .reply {
+          margin-top: 8px;
+          background: #fffbe6;
+          padding: 6px 8px;
+          border-radius: 6px;
+          font-size: 0.9rem;
+        }
+
+        .chat-item button {
+          position: absolute;
+          right: 10px;
+          top: 10px;
+          padding: 4px 8px;
+          font-size: 0.8rem;
+          cursor: pointer;
+        }
+
+        .mic-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+          gap: 16px;
+        }
+
+        .mic-box {
+          background: #f9f9f9;
+          padding: 12px;
+          border-radius: 10px;
+          border: 1px solid #ccc;
+        }
+
+        .mic-name {
+          font-weight: bold;
+          margin-bottom: 10px;
+        }
+
+        .mic-actions {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .mic-actions button {
+          font-size: 1.2rem;
+          padding: 10px;
+          border: none;
+          background: #e0e0e0;
+          border-radius: 6px;
+          cursor: pointer;
+        }
+
+        .mic-actions button:hover {
+          background: #d4d4d4;
+        }
+
+        @media (max-width: 600px) {
+          .mic-actions button {
+            flex: 1 1 45%;
+            font-size: 1rem;
+          }
+
+          .chat-item button {
+            position: static;
+            display: block;
+            margin-top: 6px;
+          }
+        }
+    </style>
 </head>
 <body>
-<h2>Chat App</h2>
-<input type="text" id="sender" placeholder="Your name" />
-<br/>
-<input type="text" id="message" placeholder="Type a message..." />
-<button onclick="sendMessage()">Send</button>
+<div class="container">
+    <h2>Stage Monitor Chat</h2>
 
-<ul id="chat"></ul>
+    <div class="toggle-container">
+        <label>
+            <input type="radio" name="viewMode" value="stage" checked onchange="updateView()"> Stage
+        </label>
+        <label>
+            <input type="radio" name="viewMode" value="hall" onchange="updateView()"> Hall
+        </label>
+    </div>
+
+    <div class="chat-area">
+        <ul id="chat"></ul>
+    </div>
+
+    <div class="mic-grid" id="micGrid">
+        <!-- Performer controls appear here -->
+    </div>
+</div>
 
 <script>
-    var stompClient = null;
+    const performers = ['Singer 1', 'Singer 2', 'Singer 3', 'Singer 4', 'Drums', 'Keyboard'];
+    let currentView = 'stage';
+    let stompClient = null;
+    let messageIdCounter = 0;
+    const messageMap = {}; // To track original messages by ID
 
     function connect() {
-        var socket = new SockJS('/ws');
-        stompClient = Stomp.over(socket);
-        stompClient.connect({}, function (frame) {
-            console.log('Connected: ' + frame);
-            stompClient.subscribe('/topic/public', function (chatMessage) {
-                showMessage(JSON.parse(chatMessage.body));
-            });
+      const socket = new SockJS('/ws');
+      stompClient = Stomp.over(socket);
+      stompClient.connect({}, function (frame) {
+        console.log('Connected: ' + frame);
+        stompClient.subscribe('/topic/public', function (chatMessage) {
+          showMessage(JSON.parse(chatMessage.body));
         });
+      });
     }
 
-    function sendMessage() {
-        var sender = document.getElementById("sender").value;
-        var message = document.getElementById("message").value;
-        stompClient.send("/app/chat.sendMessage", {}, JSON.stringify({'sender': sender, 'content': message}));
-        document.getElementById("message").value = '';
+    function sendIcon(source, message) {
+      const content = `${source}: ${message}`;
+      const id = `msg-${messageIdCounter++}`;
+      stompClient.send("/app/chat.sendMessage", {}, JSON.stringify({
+        id: id,
+        sender: currentView.toUpperCase(),
+        content: content
+      }));
+    }
+
+    function sendOkayResponse(originalId, originalContent) {
+      const responseContent = `In response to "${originalContent}" — 🎧 Okay?`;
+      stompClient.send("/app/chat.sendMessage", {}, JSON.stringify({
+        id: `reply-${messageIdCounter++}`,
+        sender: 'HALL',
+        content: responseContent,
+        replyTo: originalId
+      }));
     }
 
     function showMessage(message) {
-        var response = document.getElementById('chat');
-        var li = document.createElement('li');
-        li.appendChild(document.createTextNode(message.sender + ": " + message.content));
-        response.appendChild(li);
+      const chat = document.getElementById("chat");
+      const li = document.createElement("li");
+      li.className = "chat-item";
+
+      const messageId = message.id || `msg-${messageIdCounter++}`;
+      li.id = messageId;
+      li.textContent = `${message.sender}: ${message.content}`;
+
+      if (currentView === 'hall' && message.sender === 'STAGE' && !message.replyTo) {
+        const btn = document.createElement("button");
+        btn.textContent = "Is that okay?";
+        btn.onclick = () => sendOkayResponse(messageId, message.content);
+        li.appendChild(btn);
+        messageMap[messageId] = message.content;
+      }
+
+      if (message.replyTo) {
+        const original = document.getElementById(message.replyTo);
+        if (original) {
+          const reply = document.createElement("div");
+          reply.className = "reply";
+          reply.textContent = `${message.sender}: ${message.content}`;
+          original.appendChild(reply);
+          return; // Don't duplicate the reply below
+        }
+      }
+
+      chat.appendChild(li);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function updateView() {
+      currentView = document.querySelector('input[name="viewMode"]:checked').value;
+      renderButtons();
+    }
+
+    function renderButtons() {
+      const grid = document.getElementById('micGrid');
+      grid.innerHTML = '';
+
+      if (currentView === 'stage') {
+        performers.forEach(name => {
+          const micBox = document.createElement('div');
+          micBox.className = 'mic-box';
+
+          const label = document.createElement('div');
+          label.className = 'mic-name';
+          label.textContent = name;
+          micBox.appendChild(label);
+
+          const actions = document.createElement('div');
+          actions.className = 'mic-actions';
+
+          actions.innerHTML = `
+            <button onclick="sendIcon('${name}', '🔇 Muted')">🔇</button>
+            <button onclick="sendIcon('${name}', '🔼 Gain Up')">🔼</button>
+            <button onclick="sendIcon('${name}', '🔽 Gain Down')">🔽</button>
+            <button onclick="sendIcon('${name}', '✅ Looks Good')">✅</button>
+          `;
+
+          micBox.appendChild(actions);
+          grid.appendChild(micBox);
+        });
+      }
     }
 
     connect();
+    renderButtons();
 </script>
 </body>
 </html>
